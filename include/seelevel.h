@@ -3,25 +3,61 @@
 
 #include "settings.h"
 #include <Arduino.h>
+#include "driver/rmt.h"
+#include "esp_err.h"
+
+// Clock divisor (base clock is 80MHz)
+#define CLK_DIV 80
+// Number of clock ticks that represent 10us.  10 us = 1/100th msec.
+#define TICK_10_US (80000000 / CLK_DIV / 100000)
 
 class SeelevelInterface {
   private:
   // ESP32 Write Pin. Set HIGH to power sensors, pulsed to initiate sensor read
   uint8_t _SeeLevelWritePIN;
   // ESP32 Read pin. Will be pulled low by sensors
-  u_int8_t _SeeLevelReadPIN;
+  gpio_num_t _SeeLevelReadPIN;
 
   // Scratch pad for storing bytes read from sensor
   byte _SeeLevelData[12];
 
+  // RMT configuration
+  RingbufHandle_t rb = NULL;  
+  rmt_config_t rmt_rx_config = {
+        .rmt_mode = RMT_MODE_RX,
+        .channel = RMT_CHANNEL_4,  // S3 must use 0-3 for TX, 4-7 for RX
+        .gpio_num = _SeeLevelReadPIN,
+        .clk_div = CLK_DIV,  // 1 us?
+        .mem_block_num = 2,  // 64 * 2 32-bit items.
+        .flags = RMT_CHANNEL_FLAGS_INVERT_SIG,
+        .rx_config = {
+            .idle_threshold = TICK_10_US * 100 * 10,  // 10ms?
+            .filter_ticks_thresh = 100,
+            .filter_en = true,
+            .rm_carrier = false,
+            .carrier_freq_hz = 0,                   // ?
+            .carrier_duty_percent = 0,              // ?
+            .carrier_level = RMT_CARRIER_LEVEL_MAX  // ?
+        }};
+
   public:
     SeelevelInterface(uint8_t readPin, uint8_t writePin) {
         // Set up ESP32 pins
-        _SeeLevelReadPIN = readPin;
+        _SeeLevelReadPIN = (gpio_num_t)readPin;
         _SeeLevelWritePIN = writePin;
         pinMode(_SeeLevelWritePIN, OUTPUT);
         pinMode(_SeeLevelReadPIN, INPUT);
         digitalWrite(_SeeLevelWritePIN, LOW);
+
+        _SerialOut.println("rmt_config");
+        ESP_ERROR_CHECK(rmt_config(&rmt_rx_config));
+
+        _SerialOut.println("rmt_driver_install");
+        ESP_ERROR_CHECK(rmt_driver_install(rmt_rx_config.channel, 1000, 0));
+    }
+
+    int init(){
+      return true;
     }
 
     //
@@ -55,11 +91,73 @@ class SeelevelInterface {
       // Disable interrupts during sensor read.
       // Should take approx 13.5ms. for normal sensor read.
       // Note that this may not be reliable in all cases.
-      portDISABLE_INTERRUPTS();
-      for (auto byteLoop = 0; byteLoop < 12; byteLoop++) {
-        _SeeLevelData[byteLoop] = readByte();
+
+      const TickType_t readTimeout = 150 / portTICK_PERIOD_MS;  // 15ms?
+
+      // Wait for HIGH on read pin
+      while (!digitalRead(_SeeLevelReadPIN) == HIGH) {
+        delay(1);
       }
-      portENABLE_INTERRUPTS();
+      _SerialOut.println("Ring Buffer");
+      rmt_get_ringbuf_handle(rmt_rx_config.channel, &rb);
+
+      _SerialOut.println("rmt_rx_start");
+      ESP_ERROR_CHECK(rmt_rx_start(rmt_rx_config.channel, false));
+
+      while (rb) {
+        size_t rx_size = 0;
+        _SerialOut.println("xRingbufferReceive");
+      
+        rmt_item32_t* item = (rmt_item32_t*)xRingbufferReceive(rb, &rx_size, readTimeout);
+        if (item) {
+          byte bitCount = 0;
+          byte byteCount = 0;
+
+          for (int i = 0; i < rx_size >> 2; i++) {
+            _SerialOut.printf("%d %d:%dus %d:%dus\n", i, (item+i)->level0, (item+i)->duration0, (item+i)->level1,
+            (item+i)->duration1);
+
+            // Inverted pulses, so .level0 == 1 is low pulse, either binary '1' or '0'
+            // depending on length of pulse.
+            // .duration0 approx. 15ms -> binary '0'
+            // .duration0 approx. 50ms. -> binary '1'
+            //
+            if (((item + i)->level0 == 1) && ((item + i)->duration0 > 5) && ((item + i)->duration0 < 20)) {
+              // binary 0
+              _SeeLevelData[byteCount] = _SeeLevelData[byteCount] << 1;
+              _SeeLevelData[byteCount] |= 0;
+              bitCount++;
+
+            } else if (((item + i)->level0 == 1) && ((item + i)->duration0 > 30) && ((item + i)->duration0 < 60)) {
+              // binary 1
+              _SeeLevelData[byteCount] = _SeeLevelData[byteCount] << 1;
+              _SeeLevelData[byteCount] |= 1;
+              bitCount++;
+            } else {
+              // Not a bit - do nothing
+              continue;
+            }
+            if ((bitCount == 8)) {
+              // Got a byte
+              // printf(" byte %d\n", byteCount);
+              bitCount = 0;
+              byteCount++;
+            }
+          }
+          vRingbufferReturnItem(rb, (void*)item);
+        } else {
+          _SerialOut.println("xRingbufferReceive no Items");
+          break;
+        }
+      }
+
+      ESP_ERROR_CHECK(rmt_rx_stop(rmt_rx_config.channel));
+
+      // portDISABLE_INTERRUPTS();
+      // for (auto byteLoop = 0; byteLoop < 12; byteLoop++) {
+      //   _SeeLevelData[byteLoop] = readByte();
+      // }
+      // portENABLE_INTERRUPTS();
       delay(1);
       digitalWrite(_SeeLevelWritePIN, LOW);  // Turn power off until next poll
 

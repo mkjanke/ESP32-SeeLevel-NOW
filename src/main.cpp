@@ -48,6 +48,11 @@ void setup() {
   // Start esp-now
   WiFi.mode(WIFI_STA);
   if (!initEspNow()) {
+    _SerialOut.println("\nESP-NOW Init Failed");
+    return;
+  };
+  if (!SeelevelGauges.init()){
+    _SerialOut.println("\nSeelevel Init Failed");
     return;
   };
 }
