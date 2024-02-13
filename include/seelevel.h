@@ -1,7 +1,6 @@
 #ifndef SEELEVEL_H
 #define SEELEVEL_H
 
-#include "settings.h"
 #include <Arduino.h>
 #include "driver/rmt.h"
 #include "esp_err.h"
@@ -26,7 +25,7 @@ class SeelevelInterface {
   rmt_config_t rmt_rx_config = {
         .rmt_mode = RMT_MODE_RX,
         .channel = RMT_CHANNEL_4,  // S3 must use 0-3 for TX, 4-7 for RX
-        .gpio_num = _SeeLevelReadPIN,
+        .gpio_num = GPIO_NUM_9,
         .clk_div = CLK_DIV,  // 1 us?
         .mem_block_num = 2,  // 64 * 2 32-bit items.
         .flags = RMT_CHANNEL_FLAGS_INVERT_SIG,
@@ -41,12 +40,12 @@ class SeelevelInterface {
         }};
 
   public:
-    SeelevelInterface(uint8_t readPin, uint8_t writePin) {
+    SeelevelInterface(gpio_num_t readPin, uint8_t writePin) {
         // Set up ESP32 pins
         _SeeLevelReadPIN = (gpio_num_t)readPin;
         _SeeLevelWritePIN = writePin;
         pinMode(_SeeLevelWritePIN, OUTPUT);
-        pinMode(_SeeLevelReadPIN, INPUT);
+        // pinMode(_SeeLevelReadPIN, INPUT);
         digitalWrite(_SeeLevelWritePIN, LOW);
 
         _SerialOut.println("rmt_config");
@@ -72,6 +71,9 @@ class SeelevelInterface {
 
     int readLevel(int t, byte *buffer) {
 
+      // _SerialOut.println("Ring Buffer");
+      rmt_get_ringbuf_handle(rmt_rx_config.channel, &rb);
+
       // Power the sensor line for 2.4 ms so tank levels can be read
       digitalWrite(_SeeLevelWritePIN, HIGH);
       delayMicroseconds(SEELEVEL_POWERON_DELAY_MICROSECONDS);
@@ -83,6 +85,9 @@ class SeelevelInterface {
         digitalWrite(_SeeLevelWritePIN, HIGH);
         delayMicroseconds(SEELEVEL_PULSE_HIGH_MICROSECONDS);
       }
+      // _SerialOut.println("rmt_rx_start");
+      ESP_ERROR_CHECK(rmt_rx_start(rmt_rx_config.channel, false));
+
 
       // Sensor should respond in approx 7ms. Do nothing for 5ms.
       delay(5);
@@ -98,15 +103,9 @@ class SeelevelInterface {
       while (!digitalRead(_SeeLevelReadPIN) == HIGH) {
         delay(1);
       }
-      _SerialOut.println("Ring Buffer");
-      rmt_get_ringbuf_handle(rmt_rx_config.channel, &rb);
-
-      _SerialOut.println("rmt_rx_start");
-      ESP_ERROR_CHECK(rmt_rx_start(rmt_rx_config.channel, false));
-
       while (rb) {
         size_t rx_size = 0;
-        _SerialOut.println("xRingbufferReceive");
+        // _SerialOut.println("xRingbufferReceive");
       
         rmt_item32_t* item = (rmt_item32_t*)xRingbufferReceive(rb, &rx_size, readTimeout);
         if (item) {
@@ -114,8 +113,8 @@ class SeelevelInterface {
           byte byteCount = 0;
 
           for (int i = 0; i < rx_size >> 2; i++) {
-            _SerialOut.printf("%d %d:%dus %d:%dus\n", i, (item+i)->level0, (item+i)->duration0, (item+i)->level1,
-            (item+i)->duration1);
+            // _SerialOut.printf("%d %d:%dus %d:%dus\n", i, (item+i)->level0, (item+i)->duration0, (item+i)->level1,
+            // (item+i)->duration1);
 
             // Inverted pulses, so .level0 == 1 is low pulse, either binary '1' or '0'
             // depending on length of pulse.
@@ -146,7 +145,7 @@ class SeelevelInterface {
           }
           vRingbufferReturnItem(rb, (void*)item);
         } else {
-          _SerialOut.println("xRingbufferReceive no Items");
+          // _SerialOut.println("xRingbufferReceive no Items");
           break;
         }
       }
