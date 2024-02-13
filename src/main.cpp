@@ -10,7 +10,7 @@ See: https://github.com/mkjanke/ESP-SeeLevel-Test for more on how this works.
 #include "seelevel.h"
 #include "espnow.h"
 
-SeelevelInterface SeelevelGauges(SeeLevelReadPIN, SeeLevelWritePIN);
+SeelevelInterface SeelevelGauges;
 
 // Create JSON doc and forward to ESP-NOW queue
 bool createAndSendJSON(const std::string& deviceName, int tank, byte *sensorBuffer) {
