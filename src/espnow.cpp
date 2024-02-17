@@ -9,14 +9,17 @@
 #include "espnow.h"
 #include <Arduino.h>
 
+extern void readSeeLevelTank(int);
+
 // MAC Address of ESP_NOW receiver (broadcast address)
 uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 esp_now_peer_info_t peerInfo;
 
+TaskHandle_t xhandleEspNowReadHandle = NULL;
 TaskHandle_t xhandleEspNowWriteHandle = NULL;
 TaskHandle_t xhandleHeartbeat = NULL;
 
-// static QueueHandle_t send_to_Serial_queue;
+static QueueHandle_t recieve_from_EspNow_Queue;
 static QueueHandle_t send_to_EspNow_queue;
 
 char uptimeBuffer[12];  // scratch space for storing formatted 'uptime' string
@@ -34,7 +37,50 @@ void uptime() {
   snprintf(uptimeBuffer, sizeof(uptimeBuffer), "%2dd%2dh%2dm", days, hours, minutes);
 }
 
+
+// Callback function for messaged recieved from ESP-NOW
+// Copy message to serial queue
+// xQueueSend copys ESP_BUFFER_SIZE bytes to queue
+void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
+  if (len <= ESP_BUFFER_SIZE) {
+    if (xQueueSend(recieve_from_EspNow_Queue, (void *)incomingData, 0) != pdTRUE) {
+      Serial.println("Error sending to queue");
+    }
+  }
+}
+
 // Tasks
+// Dequeue message from ESP_NOW receive queue and process command
+void readfromEspNow(void *parameter) {
+  char receiveBuffer[ESP_BUFFER_SIZE];
+  StaticJsonDocument<ESP_BUFFER_SIZE + 32> doc;
+
+  for (;;) {
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+    // Dequeue
+    if (xQueueReceive(recieve_from_EspNow_Queue, receiveBuffer, portMAX_DELAY) == pdTRUE) {
+      // Stuff ESP_NOW data into JSON doc
+      // 'doc' automatically cleared by deserializeJson function
+      DeserializationError err = deserializeJson(doc, receiveBuffer);
+      if (err) {
+        _SerialOut.print("deserializeJson() failed: ");
+        _SerialOut.println(err.c_str());
+      } else {
+        // Valid JSON doc, now test if relevent to us
+        if (doc.containsKey("D") && doc.containsKey("CMD"))
+          if (doc["D"] == DEVICE_NAME) {
+            String command = doc["CMD"];
+            int tank = doc["Param"];
+            // _SerialOut.printf("%s %d\n", command, tank);
+            readSeeLevelTank(tank);
+          }
+      }
+      for (size_t _i = 0; _i < ESP_BUFFER_SIZE; _i++) {
+        receiveBuffer[_i] = 0;
+      }
+    }
+  }
+}
 
 // Read from ESP Send queue and forward to ESP-NOW
 // ToDo check string length and send only length bytes
@@ -45,8 +91,8 @@ void writeToEspNow(void *parameter) {
     vTaskDelay(10 / portTICK_PERIOD_MS);
     // Dequeue
     if (xQueueReceive(send_to_EspNow_queue, sendBuffer, portMAX_DELAY) == pdTRUE) {
-      Serial.print("writeToEspNow");
-      Serial.println(sendBuffer);
+      // _SerialOut.print("writeToEspNow");
+      // _SerialOut.println(sendBuffer);
       esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *)sendBuffer, ESP_BUFFER_SIZE);
     }
   }
@@ -63,13 +109,14 @@ void espnowHeartbeat(void *parameter) {
       doc["T"] = uptimeBuffer;
       doc["R"] = uxTaskGetStackHighWaterMark(xhandleHeartbeat);
       doc["W"] = uxTaskGetStackHighWaterMark(xhandleEspNowWriteHandle);
+      doc["S"] = uxTaskGetStackHighWaterMark(xhandleEspNowReadHandle);
       doc["Q"] = uxQueueMessagesWaiting(send_to_EspNow_queue);
       doc["H"] = esp_get_free_heap_size();
       doc["M"] = esp_get_minimum_free_heap_size();
 
       serializeJson(doc, buffer);  // Convert JsonDoc to JSON string
       if (!espNowSend(buffer)) {
-        Serial.print("Error sending data: ");
+        _SerialOut.print("Error sending data: ");
       }
     }
     vTaskDelay(HEARTBEAT / portTICK_PERIOD_MS);
@@ -86,7 +133,7 @@ bool espNowSend(const char *charMessage) {
     if (xQueueSend(send_to_EspNow_queue, buffer, 0) == pdTRUE) {
       return true;
     } else {
-      Serial.println("Error sending to queue");
+      _SerialOut.println("Error sending to queue");
       return false;
     }
   }
@@ -100,7 +147,7 @@ bool espNowSend(const std::string &stringMessage) {
     if (xQueueSend(send_to_EspNow_queue, charMessage, 0) == pdTRUE) {
       return true;
     } else {
-      Serial.println("Error sending to queue");
+      _SerialOut.println("Error sending to queue");
       return false;
     }
   }
@@ -113,7 +160,7 @@ bool espNowSend(const JsonDocument &doc) {
     if (xQueueSend(send_to_EspNow_queue, jsonMessage, 0) == pdTRUE) {
       return true;
     } else {
-      Serial.println("Error sending to queue");
+      _SerialOut.println("Error sending to queue");
       return false;
     }
   }
@@ -124,11 +171,14 @@ bool espNowSend(const JsonDocument &doc) {
 bool initEspNow() {
   // Initialize ESP-NOW
   if (esp_now_init() != ESP_OK) {
-    Serial.println("Error initializing ESP-NOW");
+    _SerialOut.println("Error initializing ESP-NOW");
     return false;
   } else {
-    Serial.println("ESP-NOW initialized");
+    _SerialOut.println("ESP-NOW initialized");
   }
+
+  // Register Callbacks
+  esp_now_register_recv_cb(OnDataRecv);
 
   // Register peer
   memcpy(peerInfo.peer_addr, broadcastAddress, 6);
@@ -136,17 +186,22 @@ bool initEspNow() {
   peerInfo.encrypt = false;
 
   if (esp_now_add_peer(&peerInfo) != ESP_OK) {
-    Serial.println("Failed to add peer");
+    _SerialOut.println("Failed to add peer");
     return false;
   }
   // Set up queues and tasks
-
+  recieve_from_EspNow_Queue = xQueueCreate(ESPNOW_QUEUE_SIZE, ESP_BUFFER_SIZE);
+  if (recieve_from_EspNow_Queue == NULL) {
+    _SerialOut.println("Create Queue failed");
+    return false;
+  }
   send_to_EspNow_queue = xQueueCreate(ESPNOW_QUEUE_SIZE, ESP_BUFFER_SIZE);
   if (send_to_EspNow_queue == NULL) {
-    Serial.println("Create Queue failed");
+    _SerialOut.println("Create Queue failed");
     return false;
   }
   xTaskCreate(espnowHeartbeat, "Heartbeat Handler", 2400, NULL, 4, &xhandleHeartbeat);
+  xTaskCreate(readfromEspNow, "ESP_NOW Read Handler", 4800, NULL, 4, &xhandleEspNowReadHandle);
   xTaskCreate(writeToEspNow, "ESP_NOW Write Handler", 2000, NULL, 4, &xhandleEspNowWriteHandle);
 
   return true;

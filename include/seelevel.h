@@ -6,8 +6,15 @@
 #include "driver/rmt.h"
 #include "esp_err.h"
 
+extern bool createAndSendJSON(const std::string&, int, byte *, int );
+
 // Clock divisor (base clock is 80MHz)
+// Timing values returned by RMT will be in microseconds
 #define CLK_DIV 80
+
+// Number of memory blocks for RMT recieve
+// 64 * 2 = 128 32-bit items.
+#define RMT_BLOCK_NUM   2
 
 // Time 12V bus is powered before sending pulse(s) to sensor(s)
 #define SEELEVEL_POWERON_DELAY_MICROSECONDS 2450
@@ -26,15 +33,19 @@ class SeelevelInterface {
   // Scratch pad for storing bytes read from sensor
   byte _SeeLevelData[12];
 
+  // Avoid smashing sensor with overlapping reads and writes
+  SemaphoreHandle_t _xTankReadSemaphore =  NULL;
+
   // RMT configuration
+  // Trial RMT config. Some values determined by guesswork. 
   RingbufHandle_t rb = NULL;  
   rmt_config_t rmt_rx_config = {
         .rmt_mode = RMT_MODE_RX,
         .channel = RMT_CHANNEL_4,                     // S3 must use 0-3 for TX, 4-7 for RX
         .gpio_num = SeeLevelReadPIN,
         .clk_div = CLK_DIV,                           // 1 us?
-        .mem_block_num = 2,                           // 64 * 2 32-bit items.
-        .flags = RMT_CHANNEL_FLAGS_INVERT_SIG,
+        .mem_block_num = RMT_BLOCK_NUM,
+        .flags = RMT_CHANNEL_FLAGS_INVERT_SIG,        // Sending unit pulls to ground for pulses. 
         .rx_config = {
             .idle_threshold = 200,                    // 200 ticks = 200us?
             .filter_ticks_thresh = 255,               // approx 3us?
@@ -52,25 +63,62 @@ class SeelevelInterface {
         _SeeLevelWritePIN = SeeLevelWritePIN;
         pinMode(_SeeLevelWritePIN, OUTPUT);
         digitalWrite(_SeeLevelWritePIN, LOW);
-
     }
 
     // Set up RMT driver
     int init(){
       ESP_ERROR_CHECK(rmt_config(&rmt_rx_config));
-
       ESP_ERROR_CHECK(rmt_driver_install(rmt_rx_config.channel, 1000, 0));
+          // Initialize semaphores
+      _xTankReadSemaphore = xSemaphoreCreateBinary();
+      xSemaphoreGive(_xTankReadSemaphore);
+
       return true;
     }
 
+    // Read a Tank level, calc checksum, conver to JSON, forward to ESP-NOW 
+    // Pass parameter 't', where
+    //    t = 1 SeeLevel tank 1 (Normally Fresh Tank)
+    //    t = 2 SeeLevel tank 2 (Normally Grey Tank)
+    //    t = 3 SeeLevel tank 3 (Normally Black Tank)
+    //
+    // Call readLevel to communicate with sending unit
+    //
+    void readTank(int tank) {
+    if(_xTankReadSemaphore != NULL )
+      if (xSemaphoreTake(_xTankReadSemaphore, 100 / portTICK_PERIOD_MS) == pdTRUE) {
+        // Store data from sensor read
+        byte gaugeReading[12] = {0};
+
+        // // Read each of Tank1, Tank2, Tank3. Pause between each tank read
+        int checkSum = readLevel(tank, gaugeReading);
+        _SerialOut.printf("Tank %d: ", tank);
+        for (auto i = 0; i < 12; i++) {
+          // _SerialOut.print(SeeLevelData[t][i]);
+          _SerialOut.print(gaugeReading[i]);
+          _SerialOut.print(' ');
+        }
+
+        if (checkSum != -1) {
+          _SerialOut.print("Checksum: ");
+          _SerialOut.print(checkSum);
+          _SerialOut.println(" OK");
+        } else {
+          _SerialOut.print(" byteSum % 256 - 1 = ");
+          _SerialOut.print(" Checksum: ");
+          _SerialOut.print(checkSum);
+          _SerialOut.println(" Not OK");
+        }
+        createAndSendJSON(DEVICE_NAME, tank, gaugeReading, checkSum);
+        xSemaphoreGive(_xTankReadSemaphore);
+      }
+
+      // Bus must be pulled low for some time before attempting to read another sensor
+      delay(1000);
+    }
     //
     // Read an individual tank level
-    // Pass parameter 't', where
-    //    t = 0 SeeLevel tank 1 (Normally Fresh Tank)
-    //    t = 1 SeeLevel tank 2 (Normally Grey Tank)
-    //    t = 2 SeeLevel tank 3 (Normally Black Tank)
-    //
-    // Passed variable (t) is 0, 1 or 2
+    // Passed variable (t) is 1, 2 or 3
     // Store bytes into buffer passed by caller
 
     int readLevel(int t, byte *buffer) {
@@ -78,34 +126,26 @@ class SeelevelInterface {
       // _SerialOut.println("Ring Buffer");
       rmt_get_ringbuf_handle(rmt_rx_config.channel, &rb);
 
-      // Power the sensor line for 2.4 ms so tank levels can be read
+      // Power the sensor line for 2.4 ms to
+      // wake up sending units so tank levels can be read
       digitalWrite(_SeeLevelWritePIN, HIGH);
       delayMicroseconds(SEELEVEL_POWERON_DELAY_MICROSECONDS);
 
       // 1, 2 or 3 low pulses to select Fresh, Grey, Black tank
-      for (int i = 0; i <= t; i++) {
+      for (int i = 1; i <= t; i++) {
         digitalWrite(_SeeLevelWritePIN, LOW);
         delayMicroseconds(SEELEVEL_PULSE_LOW_MICROSECONDS);
         digitalWrite(_SeeLevelWritePIN, HIGH);
         delayMicroseconds(SEELEVEL_PULSE_HIGH_MICROSECONDS);
       }
-      // _SerialOut.println("rmt_rx_start");
-      ESP_ERROR_CHECK(rmt_rx_start(rmt_rx_config.channel, false));
-
-
       // Sensor should respond in approx 7ms. Do nothing for 5ms.
       vTaskDelay( 5 / portTICK_PERIOD_MS);
 
+      // Start RMT recieve
+      ESP_ERROR_CHECK(rmt_rx_start(rmt_rx_config.channel, false));
+
       // Read 12 bytes from sensor, store in array
-      // Disable interrupts during sensor read.
       // Should take approx 13.5ms. for normal sensor read.
-      // Note that this may not be reliable in all cases.
-
-      // Wait for HIGH on read pin
-      while (!digitalRead(SeeLevelReadPIN) == HIGH) {
-        vTaskDelay( 1 / portTICK_PERIOD_MS);
-
-      }
       while (rb) {
 
         size_t rx_size = 0;

@@ -1,5 +1,7 @@
 /* ESP32 Test/Demo app: Read Garnet SeeLevel Tank Sensor/Sender
 
+Broadcast tank reading via ESP-NOW as JSON formatted document.
+
 Inspired by Jim G.: https://forums.raspberrypi.com/viewtopic.php?t=119614
 
 See: https://github.com/mkjanke/ESP-SeeLevel-Test for more on how this works.
@@ -10,10 +12,11 @@ See: https://github.com/mkjanke/ESP-SeeLevel-Test for more on how this works.
 #include "seelevel.h"
 #include "espnow.h"
 
+// 
 SeelevelInterface SeelevelGauges;
 
 // Create JSON doc and forward to ESP-NOW queue
-bool createAndSendJSON(const std::string& deviceName, int tank, byte *sensorBuffer) {
+bool createAndSendJSON(const std::string& deviceName, int tank, byte *sensorBuffer, int checkSum) {
   char _ESPbuffer[ESP_BUFFER_SIZE] = {0};
   StaticJsonDocument<ESP_BUFFER_SIZE * 2> doc;
 
@@ -25,11 +28,15 @@ bool createAndSendJSON(const std::string& deviceName, int tank, byte *sensorBuff
     output += buffer;
     output += " ";
   }
-  Serial.println(output.c_str());
 
+  // Publish to ESP-NOW with topic tank0/s
+  // Sender values as string of numbers.
+  // 180 159 11 0 0 6 45 214 230 220 202 255
+  // Send calculated checksum along, so reciever can decide to keep reading or not.
   std::string tankName = "tank" + std::to_string(tank);
   doc["D"] = DEVICE_NAME;
   doc[tankName + "/s"] = output;
+  doc[tankName + "/checkSum"] = checkSum;
   
   if (serializeJson(doc, _ESPbuffer) <= ESP_BUFFER_SIZE) {
     bool result = espNowSend(_ESPbuffer);
@@ -40,6 +47,9 @@ bool createAndSendJSON(const std::string& deviceName, int tank, byte *sensorBuff
   return false;
 }
 
+void readSeeLevelTank(int tank){
+  SeelevelGauges.readTank(tank);
+}
 
 void setup() {
   delay(5000);
@@ -58,39 +68,8 @@ void setup() {
 
 void loop() {
   
-  // Store data from sensor read
-  byte gaugeReading[12];
-
-  for (auto t = 0; t < 3; t++) {
-    _SerialOut.print("Tank " + (String)t + ": ");
-    int retval = SeelevelGauges.readLevel(t, gaugeReading);
-
-    for (auto i = 0; i < 12; i++) {
-      // _SerialOut.print(SeeLevelData[t][i]);
-      _SerialOut.print(gaugeReading[i]);
-      _SerialOut.print(' ');
-    }
-
-    if (retval != -1) {
-        _SerialOut.print("Checksum: ");
-        _SerialOut.print(retval);
-        _SerialOut.println(" OK");
-      } else {
-        _SerialOut.print(" byteSum % 256 - 1 = ");
-        _SerialOut.print(" Checksum: ");
-        _SerialOut.print(retval);
-        _SerialOut.println(" Not OK");
-      }
-      createAndSendJSON(DEVICE_NAME, t, gaugeReading);
-
-    // Bus must be pulled low for some time before attempting to read another sensor
-    delay(1000);
-    // Clear the sensor data array
-    for (auto i = 0; i < 12; i++) {
-      gaugeReading[i] = 0;
-    }
-
-  }
+  // SeelevelGauges.readTank(1);
+  // readSeeLevelTank(1);
 
   delay(10000);  // wait between read cycles
   
