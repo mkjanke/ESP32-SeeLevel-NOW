@@ -1,12 +1,21 @@
 /*
+  Send and receive JSON data via ESP-NOW
+
   Task writeToEspNow:
     Dequeue data from ESP-NOW queue, forward to ESP-NOW:
       send_to_EspNow_Queue --> writeToEspNow() --> Outgoing ESP-NOW packet
+
+  Task readFromEspNow
+    Dequeue message from ESP-NOW receive queue and process JSON formatted command
+    Currently supperted command(s):
+
+      "READ" with tank # as "param". I.E.: {"D":"ESP-SEELEVEL","CMD":"READ","Param":2}
 
   Task espnowHeartbeat:
      Send uptime and stack data to send_to_EspNow_Queue
 */
 #include "espnow.h"
+
 #include <Arduino.h>
 
 extern void readSeeLevelTank(int);
@@ -19,7 +28,7 @@ TaskHandle_t xhandleEspNowReadHandle = NULL;
 TaskHandle_t xhandleEspNowWriteHandle = NULL;
 TaskHandle_t xhandleHeartbeat = NULL;
 
-static QueueHandle_t recieve_from_EspNow_Queue;
+static QueueHandle_t receive_from_EspNow_Queue;
 static QueueHandle_t send_to_EspNow_queue;
 
 char uptimeBuffer[12];  // scratch space for storing formatted 'uptime' string
@@ -37,13 +46,12 @@ void uptime() {
   snprintf(uptimeBuffer, sizeof(uptimeBuffer), "%2dd%2dh%2dm", days, hours, minutes);
 }
 
-
 // Callback function for messaged recieved from ESP-NOW
-// Copy message to serial queue
+// Copy message to ESP-NOW queue
 // xQueueSend copys ESP_BUFFER_SIZE bytes to queue
 void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
   if (len <= ESP_BUFFER_SIZE) {
-    if (xQueueSend(recieve_from_EspNow_Queue, (void *)incomingData, 0) != pdTRUE) {
+    if (xQueueSend(receive_from_EspNow_Queue, (void *)incomingData, 0) != pdTRUE) {
       Serial.println("Error sending to queue");
     }
   }
@@ -58,7 +66,7 @@ void readfromEspNow(void *parameter) {
   for (;;) {
     vTaskDelay(10 / portTICK_PERIOD_MS);
     // Dequeue
-    if (xQueueReceive(recieve_from_EspNow_Queue, receiveBuffer, portMAX_DELAY) == pdTRUE) {
+    if (xQueueReceive(receive_from_EspNow_Queue, receiveBuffer, portMAX_DELAY) == pdTRUE) {
       // Stuff ESP_NOW data into JSON doc
       // 'doc' automatically cleared by deserializeJson function
       DeserializationError err = deserializeJson(doc, receiveBuffer);
@@ -190,8 +198,8 @@ bool initEspNow() {
     return false;
   }
   // Set up queues and tasks
-  recieve_from_EspNow_Queue = xQueueCreate(ESPNOW_QUEUE_SIZE, ESP_BUFFER_SIZE);
-  if (recieve_from_EspNow_Queue == NULL) {
+  receive_from_EspNow_Queue = xQueueCreate(ESPNOW_QUEUE_SIZE, ESP_BUFFER_SIZE);
+  if (receive_from_EspNow_Queue == NULL) {
     _SerialOut.println("Create Queue failed");
     return false;
   }
