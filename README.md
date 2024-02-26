@@ -12,7 +12,7 @@ Each Garnet SeeLevel tank sender is configured as sensor 1, 2, or 3 by snipping 
 
 The sender will respond by pulling the 12V line to ground in a series of pulses. Pulses will either be approximately 13µs wide or 48µs wide. In this application I'm treating the short pulses as '0', long pulses as '1'. (JIm G. did the opposite)
 
-This version uses teh ESP32 'RMT' library to detect pulses from the sending units. A simpler version that uses polling and doesn't forward to ESP-NOW is: https://github.com/mkjanke/ESP-SeeLevel-Test
+This version uses the ESP32 'RMT' library to detect pulses from the sending units. A simpler version that uses polling and doesn't forward to ESP-NOW is: https://github.com/mkjanke/ESP-SeeLevel-Test
 
 Bytes returned from sender:
 
