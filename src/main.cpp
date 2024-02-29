@@ -17,7 +17,22 @@ See: https://github.com/mkjanke/ESP-SeeLevel-Test for more on how this works.
 // Create object to manage SeeLevel communications
 SeelevelInterface SeelevelGauges;
 
-// Create JSON doc from sensor buffer and forward to ESP-NOW queue
+/*
+  Create JSON doc from sensor buffer and forward to ESP-NOW queue
+
+  For 'tank1' on device named ESP-SEELEVEL JSON document will be sent as:
+  {
+    "D":"ESP-SEELEVEL",
+    "tank1/s":"147 3 0 0 0 0 0 10 95 156 255 255 ",
+    "tank1/checkSum":3
+  }
+
+  D: Device name (in settings.h)
+  s: raw data returned from sending unit. Each byte is expressed as int 0<>255, 
+     formatted as ASCII chars (not binary bytes)
+  checkSum: ASCI representation of integer checksum.
+
+*/
 bool createAndSendJSON(const std::string& deviceName, int tank, byte* sensorBuffer, int checkSum) {
   char _ESPbuffer[ESP_BUFFER_SIZE] = {0};
   StaticJsonDocument<ESP_BUFFER_SIZE * 2> doc;
@@ -31,12 +46,7 @@ bool createAndSendJSON(const std::string& deviceName, int tank, byte* sensorBuff
     output += " ";
   }
 
-  // Publish to ESP-NOW with topic tank0/s
-  //
-  // Sending unit values as string of numbers.
-  // 180 159 11 0 0 6 45 214 230 220 202 255
-  //
-  // Send calculated checksum along, so receiver can decide to keep reading or not.
+  // Publish to ESP-NOW
   std::string tankName = "tank" + std::to_string(tank);
   doc["D"] = DEVICE_NAME;
   doc[tankName + "/s"] = output;

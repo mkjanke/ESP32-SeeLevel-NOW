@@ -1,7 +1,7 @@
 #ifndef SETTINGS_H
 #define SETTINGS_H
 
-#define HEARTBEAT 10000L  // Sensor and WiFi loop delay (ms)
+#define HEARTBEAT 10000L  // Heartbeat loop delay (ms)
 #define DEVICE_NAME "ESP-SEELEVEL"
 
 // ESP32 Write Pin. Set HIGH to power sensors, pulsed to initiate sensor read

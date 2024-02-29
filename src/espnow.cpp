@@ -15,9 +15,9 @@
      Send uptime and stack data to send_to_EspNow_Queue
 */
 #include "espnow.h"
-
 #include <Arduino.h>
 
+// Function to be called when data is received from ESP-NOW
 extern void readSeeLevelTank(int);
 
 // MAC Address of ESP_NOW receiver (broadcast address)
@@ -133,7 +133,7 @@ void espnowHeartbeat(void *parameter) {
 
 // Functions
 
-// Queue message to send_to_EspNow_queue
+// Queue message to send_to_EspNow_queue (const char *)
 bool espNowSend(const char *charMessage) {
   char buffer[ESP_BUFFER_SIZE] = {0};
   if (strlen(charMessage) <= ESP_BUFFER_SIZE - 1) {
@@ -148,6 +148,7 @@ bool espNowSend(const char *charMessage) {
   return false;
 }
 
+// Queue message to send_to_EspNow_queue (std::string&)
 bool espNowSend(const std::string &stringMessage) {
   char charMessage[ESP_BUFFER_SIZE] = {0};
   if (stringMessage.size() <= ESP_BUFFER_SIZE) {
@@ -162,6 +163,7 @@ bool espNowSend(const std::string &stringMessage) {
   return false;
 }
 
+// Queue message to send_to_EspNow_queue (JSON formatted message)
 bool espNowSend(const JsonDocument &doc) {
   char jsonMessage[ESP_BUFFER_SIZE] = {0};
   if (serializeJson(doc, jsonMessage, ESP_BUFFER_SIZE) <= ESP_BUFFER_SIZE) {
@@ -176,6 +178,8 @@ bool espNowSend(const JsonDocument &doc) {
 }
 
 // Initialize ESP_NOW interface. Call once from setup()
+// Set up tasks to read, write and queue messages
+//
 bool initEspNow() {
   // Initialize ESP-NOW
   if (esp_now_init() != ESP_OK) {

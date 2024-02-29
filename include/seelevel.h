@@ -1,7 +1,7 @@
 /* ESP32 Test/Demo app: Read Garnet SeeLevel Tank Sensor/Sender
 
-WHen sent command via ESP_NOW, read tank level
-Send result via ESP-NOW as JSON formatted document.
+When sent command via ESP_NOW, read tank level
+Call createAndSendJSON to send result via ESP-NOW as JSON formatted document.
 
 Inspired by Jim G.: https://forums.raspberrypi.com/viewtopic.php?t=119614
 
@@ -26,6 +26,9 @@ extern bool createAndSendJSON(const std::string &, int, byte *, int);
 // Number of memory blocks for RMT recieve
 // 64 * 2 = 128 32-bit items.
 #define RMT_BLOCK_NUM 2
+
+// Number of bytes returned by SeeLevel sending unit
+#define SEELEVEL_BYTE_COUNT 12
 
 // Time 12V bus is powered before sending pulse(s) to sensor(s)
 #define SEELEVEL_POWERON_DELAY_MICROSECONDS 2450
@@ -73,7 +76,7 @@ class SeelevelInterface {
   }
 
   // Initialize SeeLevel object
-  // Set up RMT driver
+  // Set up RMT driver to handle incoming pulses from sending unit
   int init() {
     ESP_ERROR_CHECK(rmt_config(&rmt_rx_config));
     ESP_ERROR_CHECK(rmt_driver_install(rmt_rx_config.channel, 1000, 0));
@@ -97,14 +100,14 @@ class SeelevelInterface {
     if (_xTankReadSemaphore != NULL)
       if (xSemaphoreTake(_xTankReadSemaphore, 100 / portTICK_PERIOD_MS) == pdTRUE) {
         // Store data from sensor read
-        byte gaugeReading[12] = {0};
+        byte gaugeReading[SEELEVEL_BYTE_COUNT] = {0};
 
         // Read tank level and return checksum
         // Sending unit values will be in gaugeReading[].
         // Will be all zeros with -1 checkSum if invalid read
         int checkSum = readLevel(tank, gaugeReading);
         _SerialOut.printf("Tank %d: ", tank);
-        for (auto i = 0; i < 12; i++) {
+        for (auto i = 0; i < SEELEVEL_BYTE_COUNT; i++) {
           _SerialOut.print(gaugeReading[i]);
           _SerialOut.print(' ');
         }
@@ -134,7 +137,7 @@ class SeelevelInterface {
   // Store bytes into buffer passed by caller
   int readLevel(int t, byte *buffer) {
     // Scratch pad for storing bytes read from sensor
-    byte _SeeLevelData[12] = {0};
+    byte _SeeLevelData[SEELEVEL_BYTE_COUNT] = {0};
 
     // _SerialOut.println("Ring Buffer");
     rmt_get_ringbuf_handle(rmt_rx_config.channel, &rb);
@@ -212,7 +215,7 @@ class SeelevelInterface {
     digitalWrite(_SeeLevelWritePIN, LOW);
 
     // Copy data into caller's array
-    memcpy(buffer, _SeeLevelData, 12);
+    memcpy(buffer, _SeeLevelData, SEELEVEL_BYTE_COUNT);
 
     // Verify checksum
     int byteSum = 0;
@@ -231,7 +234,8 @@ class SeelevelInterface {
     } else {
       return -1;
     }
-  }
+  } //readLevel
+
 }; //class SeelevelInterface
 
 #endif

@@ -21,6 +21,10 @@ Bytes returned from sender:
 
 For the segment fill values, a 'full' value will likely be less than 255, apparently depending on tank wall thickness, tank size, and perhaps how well the sender is attached. In my testing, using a 710AR Rev E taped to a water jug, I see 'full' segments  anywhere from 126 to 200. Pressing on a segment with my thumb will cause the sensor to read a higher value. Capacitance, perhaps?
 
+This version uses an ESP32 RMT periphrial (library) to capture pulses sent by sending unit. The 'test' version uses polling instead of RMT, and can be used as a base for building an app that runs on other platforms (I.E. arduino).
+
+https://github.com/mkjanke/ESP-SeeLevel-Test
+
 Testing can be done by temporarily attaching sensor to water jug or by simply touching sensor segments.
 
 Output to Serial port upon successful read:
@@ -41,7 +45,7 @@ A cheap 12V-tolerant logic analyzer (LA1010) was used to assist in debugging.
 
  * No attempt is made to process the returned data into an actual liquid level. I'm intending that to be done in some other app (perhaps Node-Red).
 
- * Uses Arduino framework but is only tested on an ESP32.
+ * Uses Arduino framework but is only tested on an ESP32 annd uses ESP32 specific code and libraries (RMT).
 
 ### TBD
 
