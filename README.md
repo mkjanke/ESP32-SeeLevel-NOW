@@ -12,7 +12,7 @@ Each Garnet SeeLevel tank sender is configured as sensor 1, 2, or 3 by snipping 
 
 The sender will respond by pulling the 12V line to ground in a series of pulses. Pulses will either be approximately 13µs wide or 48µs wide. In this application I'm treating the short pulses as '0', long pulses as '1'. (JIm G. did the opposite)
 
-This version uses the ESP32 'RMT' library to detect pulses from the sending units. A simpler version that uses polling and doesn't forward to ESP-NOW is: https://github.com/mkjanke/ESP-SeeLevel-Test
+This version uses the ESP32 'RMT' library to detect pulses from the sending units and boradcasts sending unit data via ESP-NOW. A simpler version that uses polling and doesn't forward to ESP-NOW is: https://github.com/mkjanke/ESP-SeeLevel-Test
 
 Bytes returned from sender:
 
@@ -23,15 +23,15 @@ Bytes returned from sender:
 
 For the segment fill values, a 'full' value will likely be less than 255, apparently depending on tank wall thickness, tank size, and perhaps how well the sender is attached. In my testing, using a 710AR Rev E taped to a water jug, I see 'full' segments  anywhere from 126 to 200. Pressing on a segment with my thumb will cause the sensor to read a higher value. Capacitance, perhaps?
 
-This version uses an ESP32 RMT periphrial (library) to capture pulses sent by sending unit. The 'test' version uses polling instead of RMT, and can be used as a base for building an app that runs on other platforms (I.E. arduino).
-
-https://github.com/mkjanke/ESP-SeeLevel-Test
-
 Testing can be done by temporarily attaching sensor to water jug or by simply touching sensor segments.
 
 Output to Serial port upon successful read:
 
     Tank 0: 147 121 0 0 0 0 14 108 149 179 184 255 Checksum: 121 OK
+
+Output broadcast via ESP-NOW is a JSON formatted message suitable for parsing via Node-Red or python script, such as:
+
+     { "D":"device name", "tankName/s": "147 121 0 0 0 0 14 108 149 179 184 255", "tankName/checkSum": "121" }\n
 
 ### Interfacing 12V sensor with 3.3V ESP32:
 
