@@ -25,6 +25,7 @@ For the segment fill values, a 'full' value will likely be less than 255, appare
 
 Testing can be done by temporarily attaching sensor to water jug or by simply touching sensor segments.
 
+### Output
 Output to Serial port upon successful read:
 
     Tank 0: 147 121 0 0 0 0 14 108 149 179 184 255 Checksum: 121 OK
@@ -32,6 +33,8 @@ Output to Serial port upon successful read:
 Output broadcast via ESP-NOW is a JSON formatted message suitable for parsing via Node-Red or python script, such as:
 
      { "D":"device name", "tankName/s": "147 121 0 0 0 0 14 108 149 179 184 255", "tankName/checkSum": "121" }\n
+
+The companion app to this: https://github.com/mkjanke/ESP32-Now-JSON-GW. This gateway receives ESP-NOW broadcasts and forwards them to an attached serial port. 
 
 ### Interfacing 12V sensor with 3.3V ESP32:
 
