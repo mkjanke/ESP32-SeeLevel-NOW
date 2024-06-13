@@ -40,13 +40,13 @@ The companion app to this: https://github.com/mkjanke/ESP32-Now-JSON-GW. This ga
 
 A description of the circuit necessary to interface the 3.3V ESP32 with the 12V SeeLevel sensor is [here](./docs/LevelShifter.md). 
 
-The interface, designed by Jim G. of the Raspberry Pi forum, uses a high-side P-channel MOSFET controlled by an ESP32 3.3V pin. Data is read on a second pin via a voltage divider.
+The interface, designed by Jim G. of the Raspberry Pi forum, uses a high-side P-channel MOSFET controlled by an ESP32 3.3V pin. Data is read on a second pin via a voltage divider. 
+
+An alternative interface and an ESPHome component version is here: https://github.com/j9brown/esphome-seelevel
 
 A cheap 12V-tolerant logic analyzer (LA1010) was used to assist in debugging.
 
 ### Notes:
-
- * This app doesn't yet attempt to accommodate a trimmed sender or any sender other than the 710AR Rev E.
 
  * No attempt is made to process the returned data into an actual liquid level. I'm intending that to be done in some other app (perhaps Node-Red).
 
